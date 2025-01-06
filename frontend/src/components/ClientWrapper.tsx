@@ -105,7 +105,7 @@ export const wagmiConfig = createConfig({
 const queryClient = new QueryClient();
 
 export const dynamicConfig = {
-  environmentId: ENVIRONMENT_ID,
+  environmentId: ENVIRONMENT_ID || '',
   walletConnectors: [EthereumWalletConnectors],
   overrides: { 
     evmNetworks,
@@ -118,8 +118,10 @@ export const dynamicConfig = {
 
 export const WalletContext = createContext<{
   isWalletConnected: boolean;
+  primaryWallet: { address: string } | null;
 }>({
   isWalletConnected: false,
+  primaryWallet: null
 });
 
 export const useWallet = () => useContext(WalletContext);
@@ -134,7 +136,7 @@ function WalletStateProvider({ children }: { children: React.ReactNode }) {
   }, [primaryWallet]);
 
   return (
-    <WalletContext.Provider value={{ isWalletConnected }}>
+    <WalletContext.Provider value={{ isWalletConnected, primaryWallet }}>
       {children}
     </WalletContext.Provider>
   );
