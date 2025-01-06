@@ -9,8 +9,9 @@ def create_app():
     app.config.from_object('app.config.Config')
     
     # Register blueprints
-    from app.routes import auth, contests
-    app.register_blueprint(auth.bp)
-    app.register_blueprint(contests.bp)
+    from .routes.auth import bp as auth_bp
+    from .routes.contests import bp as contests_bp
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(contests_bp)
     
     return app 

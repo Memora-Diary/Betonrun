@@ -10,12 +10,37 @@ import { Contest } from '@/types/contest';
 import Logo from '@/components/Logo';
 import SimpleMoneyFlow from '@/components/SimpleMoneyFlow';
 import Footer from '@/components/Footer';
+import { ContractService } from '@/services/contract';
+import { BrowserProvider, formatEther } from 'ethers';
+
+interface Challenge {
+  id: number;
+  creator: string;
+  title: string;
+  stakeAmount: string;
+  startDate: Date;
+  endDate: Date;
+  scheduleType: string;
+  scheduleDays: string[];
+  targetDistance: number;
+  ended: boolean;
+  isParticipant?: boolean;
+  completedDays: number;
+  isStravaConnected?: boolean;
+}
 
 export default function Home() {
   const router = useRouter();
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [isStravaConnected, setIsStravaConnected] = useState(false);
-  const { isWalletConnected } = useWallet();
+  const { isWalletConnected, primaryWallet } = useWallet();
+  const [contractService, setContractService] = useState<ContractService | null>(null);
+  const [challenges, setChallenges] = useState<{participating: Challenge[], available: Challenge[]}>({
+    participating: [],
+    available: []
+  });
+  const [loading, setLoading] = useState(true);
+  const [joiningChallengeId, setJoiningChallengeId] = useState<number | null>(null);
 
   const [stats, setStats] = useState({
     totalStaked: 156890,
@@ -35,6 +60,80 @@ export default function Home() {
 
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const initializeContract = async () => {
+      if (window.ethereum) {
+        const provider = new BrowserProvider(window.ethereum);
+        const service = new ContractService(provider);
+        setContractService(service);
+      }
+    };
+
+    initializeContract();
+  }, []);
+
+  useEffect(() => {
+    if (contractService && primaryWallet?.address) {
+      loadChallenges();
+    }
+  }, [contractService, primaryWallet]);
+
+  const loadChallenges = async () => {
+    if (!contractService || !primaryWallet?.address) return;
+    
+    try {
+      setLoading(true);
+      const count = await contractService.getChallengeCount();
+      console.log({count})
+      const allChallenges: Challenge[] = [];
+
+      for (let i = 1; i <= count; i++) {
+        const details = await contractService.getChallengeDetails(i);
+        console.log(details);
+        const isParticipant = await contractService.isParticipant(i, primaryWallet.address);
+        const completedDays = isParticipant ? await contractService.getCompletedDays(i, primaryWallet.address) : 0;
+        const isStravaConnected = isParticipant ? await contractService.isStravaConnected(i, primaryWallet.address) : false;
+
+        allChallenges.push({
+          id: i,
+          ...details,
+          stakeAmount: formatEther(details.stakeAmount),
+          isParticipant,
+          completedDays,
+          isStravaConnected
+        });
+      }
+
+      // Filter challenges based on participation and status
+      setChallenges({
+        participating: allChallenges.filter(c => c.isParticipant && !c.ended),
+        available: allChallenges.filter(c => !c.isParticipant && !c.ended)
+      });
+    } catch (error) {
+      console.error('Failed to load challenges:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleJoinChallenge = async (challengeId: number, stakeAmount: string) => {
+    if (!contractService || !isWalletConnected) {
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      setJoiningChallengeId(challengeId);
+      await contractService.joinChallenge(challengeId, stakeAmount);
+      await loadChallenges(); // Reload challenges after successful join
+    } catch (error: any) {
+      console.error('Failed to join challenge:', error);
+      alert('Failed to join challenge: ' + (error.reason || error.message));
+    } finally {
+      setJoiningChallengeId(null);
+    }
+  };
 
   const handleStravaConnect = async () => {
     try {
@@ -84,10 +183,66 @@ export default function Home() {
 
   const handleCreateContest = async (contest: Contest) => {
     try {
+      if (!contractService) {
+        throw new Error('Contract service not initialized');
+      }
+
+      // Calculate duration in seconds (7 days by default)
+      const duration = 7 * 24 * 60 * 60;
+      
+      // Create the challenge on the blockchain
+      const contractResponse = await contractService.createChallenge(
+        contest.title,
+        duration,
+        contest.schedule.type,
+        contest.schedule.days,
+        contest.schedule.distance,
+        contest.stake_amount.toString()
+      );
+
+      // Wait for the transaction to be mined
+      await contractResponse;
+
+      // Create the contest in the backend
       const response = await contests.create(contest);
       router.push(`/dashboard?contest_id=${response.id}`);
     } catch (error) {
       console.error('Failed to create contest:', error);
+    }
+  };
+
+  const handleVerifyRun = async (challengeId: number) => {
+    try {
+      const response = await fetch('http://localhost:5001/api/auth/strava/check-completion ', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          challengeId,
+          address: primaryWallet?.address,
+          targetDistance: challenges.participating.find(c => c.id === challengeId)?.targetDistance || 0,
+          startDate: challenges.participating.find(c => c.id === challengeId)?.startDate.toISOString(),
+          endDate: challenges.participating.find(c => c.id === challengeId)?.endDate.toISOString()
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to verify run');
+      }
+
+      const data = await response.json();
+      if (data.completed) {
+        alert('Congratulations! You have completed your running goal!');
+      } else {
+        alert('You have not yet completed your running goal. Keep going!');
+      }
+
+      // Refresh challenges to update progress
+      await loadChallenges();
+    } catch (error) {
+      console.error('Failed to verify run:', error);
+      alert('Failed to verify run progress. Please try again.');
     }
   };
 
@@ -153,6 +308,99 @@ export default function Home() {
             <div className="text-3xl font-bold text-orange-500">{stats.successfulChallenges.toLocaleString()}</div>
             <div className="text-gray-400">Successful Challenges</div>
           </div>
+        </div>
+
+        {/* Challenges Section */}
+        <div className="max-w-7xl mx-auto mt-20">
+          {loading ? (
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto"></div>
+              <p className="mt-4 text-gray-400">Loading challenges...</p>
+            </div>
+          ) : (
+            <>
+              {challenges.participating.length > 0 && (
+                <section className="mb-12">
+                  <h2 className="text-3xl font-bold mb-6">Your Active Challenges</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {challenges.participating.map((challenge) => (
+                      <div key={challenge.id} className="bg-gray-800 rounded-xl p-6 shadow-lg">
+                        <h3 className="text-xl font-bold mb-2">{challenge.title}</h3>
+                        <div className="space-y-2 text-gray-300">
+                          <p>Stake: {challenge.stakeAmount} ETH</p>
+                          <p>Distance: {challenge.targetDistance}km</p>
+                          <p>Schedule: {challenge.scheduleType}</p>
+                          <p>Progress: {challenge.completedDays} days completed</p>
+                          {!challenge.isStravaConnected && (
+                            <button
+                              onClick={handleStravaConnect}
+                              className="mt-4 w-full bg-[#FC4C02] text-white px-4 py-2 rounded-lg hover:bg-[#E34402] transition-colors"
+                            >
+                              Connect Strava to Track Progress
+                            </button>
+                          )}
+                          {challenge.isStravaConnected && (
+                            <button
+                              onClick={() => handleVerifyRun(challenge.id)}
+                              className="mt-4 w-full bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors"
+                            >
+                              Verify Run Progress
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section>
+                <h2 className="text-3xl font-bold mb-6">Available Challenges</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {challenges.available.map((challenge) => (
+                    <div key={challenge.id} className="bg-gray-800 rounded-xl p-6 shadow-lg">
+                      <h3 className="text-xl font-bold mb-2">{challenge.title}</h3>
+                      <div className="space-y-2 text-gray-300">
+                        <p>Stake: {challenge.stakeAmount} ETH</p>
+                        <p>Distance: {challenge.targetDistance}km</p>
+                        <p>Schedule: {challenge.scheduleType}</p>
+                        <button
+                          onClick={() => handleJoinChallenge(challenge.id, challenge.stakeAmount)}
+                          disabled={joiningChallengeId === challenge.id}
+                          className={`mt-4 w-full bg-gradient-to-r from-orange-500 to-red-600 text-white px-4 py-2 rounded-lg hover:from-orange-600 hover:to-red-700 transition-colors ${
+                            joiningChallengeId === challenge.id ? 'opacity-50 cursor-not-allowed' : ''
+                          }`}
+                        >
+                          {joiningChallengeId === challenge.id ? (
+                            <span className="flex items-center justify-center">
+                              <svg className="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                              </svg>
+                              Joining...
+                            </span>
+                          ) : (
+                            'Join Challenge'
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {challenges.available.length === 0 && (
+                    <div className="col-span-full text-center text-gray-400">
+                      <p>No available challenges at the moment.</p>
+                      <button
+                        onClick={() => setShowCreateForm(true)}
+                        className="mt-4 bg-gradient-to-r from-orange-500 to-red-600 text-white px-6 py-2 rounded-xl hover:from-orange-600 hover:to-red-700 transition-all duration-300"
+                      >
+                        Create a Challenge
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </>
+          )}
         </div>
       </div>
 

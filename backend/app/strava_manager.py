@@ -96,24 +96,42 @@ class StravaManager:
         """
         Fill the Strava Client with the information about the token.
         This token need to be refreshed only if not valid.
+        
+        Args:
+            strava_code (str): The authorization code received from Strava OAuth flow
+            
+        Raises:
+            stravalib.exc.Fault: If the token exchange fails
         """
-        token_response = self.strava_client.exchange_code_for_token(
-            client_id=self.strava_client_id,
-            client_secret=self.strava_client_secret,
-            code=strava_code,
-        )
-        print("*" * 100, flush=True)
-        print(token_response, flush=True)
-        print("*" * 100, flush=True)
-        session["access_token"] = token_response["access_token"]
-        session["refresh_token"] = token_response["refresh_token"]
-        session["expires_at"] = token_response["expires_at"]
+        try:
+            token_response = self.strava_client.exchange_code_for_token(
+                client_id=self.strava_client_id,
+                client_secret=self.strava_client_secret,
+                code=strava_code,
+            )
+            
+            # Store tokens in session
+            session["access_token"] = token_response["access_token"]
+            session["refresh_token"] = token_response["refresh_token"]
+            session["expires_at"] = token_response["expires_at"]
 
-        self.set_token_response(
-            access_token=token_response["access_token"],
-            refresh_token=token_response["refresh_token"],
-            expires_at=token_response["expires_at"],
-        )
+            # Update the client with new tokens
+            self.set_token_response(
+                access_token=token_response["access_token"],
+                refresh_token=token_response["refresh_token"],
+                expires_at=token_response["expires_at"],
+            )
+            
+        except stravalib.exc.Fault as e:
+            logging.error(f"Failed to exchange code for token: {str(e)}")
+            # You might want to clear any existing invalid tokens
+            if "access_token" in session:
+                del session["access_token"]
+            if "refresh_token" in session:
+                del session["refresh_token"]
+            if "expires_at" in session:
+                del session["expires_at"]
+            raise
 
     def get_athlete_v2(self):
         """
@@ -287,6 +305,32 @@ class StravaManager:
         activities_df = get_strava_activities_pandas(activities_dict)
 
         return activities_df
+
+    def check_challenge_completion(self, start_date: date, end_date: date, target_distance: float) -> bool:
+        """
+        Check if the user has completed their running challenge based on Strava activities.
+        
+        Args:
+            start_date (date): Challenge start date
+            end_date (date): Challenge end date
+            target_distance (float): Target distance in kilometers
+            
+        Returns:
+            bool: True if challenge completed, False otherwise
+        """
+        try:
+            # Get activities between dates
+            activities_df = self.get_activities_between(start_date, end_date)
+            
+            # Calculate total distance in kilometers
+            total_distance = activities_df['distance_km'].sum()
+            
+            # Check if target distance was reached
+            return total_distance >= target_distance
+            
+        except Exception as e:
+            logging.error(f"Failed to check challenge completion: {str(e)}")
+            return False
 
 
 def get_strava_activities_string(activities: BatchedResultsIterator) -> List:

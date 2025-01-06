@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { contests, auth } from '@/lib/api';
+import { auth } from '@/lib/api';
+import { ContractService } from '@/services/contract';
+import { useProvider } from '@/hooks/useProvider';
+import { ethers } from 'ethers';
 
 interface Schedule {
   type: 'daily' | 'weekly';
@@ -47,25 +50,98 @@ export default function Dashboard() {
   });
   const [showStravaPrompt, setShowStravaPrompt] = useState(false);
   const [createdContestId, setCreatedContestId] = useState<number | null>(null);
+  const provider = useProvider();
+  const [contractService, setContractService] = useState<ContractService | null>(null);
+
+  useEffect(() => {
+    if (provider) {
+      setContractService(new ContractService(provider));
+    }
+  }, [provider]);
 
   useEffect(() => {
     loadContests();
   }, []);
 
   const loadContests = async () => {
+    if (!contractService) return;
+
     try {
-      const data = await contests.list();
-      setContestList(data);
+      // Get all challenges from the contract
+      const challengeCount = await contractService.getChallengeCount();
+      const challenges = [];
+      
+      for (let i = 1; i <= challengeCount; i++) {
+        const challenge = await contractService.getChallengeDetails(i);
+        challenges.push({
+          id: i,
+          title: challenge.title,
+          stake_amount: Number(ethers.utils.formatEther(challenge.stakeAmount)),
+          schedule: {
+            type: challenge.scheduleType,
+            days: challenge.scheduleDays,
+            distance: challenge.targetDistance,
+            time: '' // If you want to keep this, you'll need to add it to your contract
+          },
+          participants: challenge.participants.map(p => ({
+            id: p.id,
+            name: p.name || p.address.slice(0, 6) + '...' + p.address.slice(-4),
+            paid: true,
+            completed_days: p.completedDays,
+            strava_connected: p.stravaConnected
+          })),
+          status: challenge.ended ? 'ended' : 'active'
+        });
+      }
+
+      // Split into participating and available challenges
+      const participating = challenges.filter(c => 
+        c.participants.some(p => p.address === contractService.signer.getAddress())
+      );
+      const available = challenges.filter(c => 
+        !c.participants.some(p => p.address === contractService.signer.getAddress())
+      );
+
+      setContestList({ participating, available });
     } catch (error) {
-      console.error('Failed to load contests:', error);
+      console.error('Failed to load challenges:', error);
     }
   };
 
   const handleCreateContest = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!contractService) {
+      console.error('Contract service not initialized');
+      return;
+    }
+
     try {
-      const response = await contests.create(newContest);
-      setCreatedContestId(response.id);
+      // Convert schedule days to proper format
+      const scheduleDays = newContest.schedule.type === 'daily' 
+        ? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        : newContest.schedule.days;
+
+      // Create transaction
+      const tx = await contractService.createChallenge(
+        newContest.title,
+        30, // duration in days - you might want to make this configurable
+        newContest.schedule.type,
+        scheduleDays,
+        newContest.schedule.distance,
+        newContest.stake_amount.toString()
+      );
+
+      // Wait for transaction confirmation
+      const receipt = await tx.wait();
+      
+      // Get the challenge ID from the event
+      const event = receipt.events?.find(e => e.event === 'ChallengeCreated');
+      if (event && event.args) {
+        const challengeId = event.args.challengeId.toNumber();
+        setCreatedContestId(challengeId);
+      }
+
+      // Reset form
       setNewContest({
         title: '',
         stake_amount: 0,
@@ -76,9 +152,12 @@ export default function Dashboard() {
           time: ''
         }
       });
+      
       setShowStravaPrompt(true);
+      
     } catch (error) {
-      console.error('Failed to create contest:', error);
+      console.error('Failed to create challenge:', error);
+      // Add proper error handling here - you might want to show a notification
     }
   };
 
