@@ -306,6 +306,32 @@ class StravaManager:
 
         return activities_df
 
+    def check_challenge_completion(self, start_date: date, end_date: date, target_distance: float) -> bool:
+        """
+        Check if the user has completed their running challenge based on Strava activities.
+        
+        Args:
+            start_date (date): Challenge start date
+            end_date (date): Challenge end date
+            target_distance (float): Target distance in kilometers
+            
+        Returns:
+            bool: True if challenge completed, False otherwise
+        """
+        try:
+            # Get activities between dates
+            activities_df = self.get_activities_between(start_date, end_date)
+            
+            # Calculate total distance in kilometers
+            total_distance = activities_df['distance_km'].sum()
+            
+            # Check if target distance was reached
+            return total_distance >= target_distance
+            
+        except Exception as e:
+            logging.error(f"Failed to check challenge completion: {str(e)}")
+            return False
+
 
 def get_strava_activities_string(activities: BatchedResultsIterator) -> List:
     """

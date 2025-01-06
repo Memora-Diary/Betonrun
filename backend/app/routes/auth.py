@@ -1,6 +1,7 @@
 from flask import Blueprint, current_app, request, jsonify, session
 from app.strava_manager import StravaManager
 from .contests import contests  # Import the contests dictionary
+from datetime import datetime
 
 bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
@@ -57,3 +58,37 @@ def strava_callback():
         'success': True,
         'athlete': session['athlete']
     }) 
+
+@bp.route('/strava/check-completion', methods=['POST'])
+def check_strava_completion():
+    try:
+        # Ensure athlete ID is in session
+        if 'athlete' not in session:
+            return jsonify({'error': 'Not authenticated with Strava'}), 401
+            
+        data = request.get_json()
+        athlete_id = session['athlete']['id']
+        
+        # Initialize Strava manager
+        client = StravaManager(session=False)
+        
+        # Get athlete stats from Strava API
+        athlete_stats = client.strava_client.get_athlete_stats(athlete_id)
+        
+        # Get recent run totals
+        recent_runs = athlete_stats.recent_run_totals
+        total_distance = recent_runs.distance if recent_runs else 0
+        
+        # Compare with target distance
+        completed = total_distance >= float(data['targetDistance'])
+        
+        return jsonify({
+            'completed': completed,
+            'current_distance': total_distance,
+            'target_distance': float(data['targetDistance'])
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        }), 500

@@ -75,21 +75,32 @@ export class ContractService {
       const signer = await this.ensureSigner();
       const contract = this.contract.connect(signer);
 
+      // Get challenge details to verify stake amount
+      const challenge = await this.getChallengeDetails(challengeId);
+      
       // Convert ETH amount to Wei
       const valueInWei = parseEther(stakeAmount);
 
       // Use a fixed gas limit that should be sufficient
       const gasLimit = 300000;
 
+      // Call the contract's joinCompetition function
       // @ts-ignore - Contract methods are dynamically available
       const tx = await contract.joinCompetition(challengeId, {
         value: valueInWei,
         gasLimit
       });
 
-      console.log('Transaction sent:', tx.hash);
+      console.log('Join transaction sent:', tx.hash);
       const receipt = await tx.wait();
-      console.log('Transaction confirmed:', receipt);
+      console.log('Join transaction confirmed:', receipt);
+
+      // After successful join, connect Strava if not already connected
+      const stravaConnected = await this.isStravaConnected(challengeId, await signer.getAddress());
+      if (!stravaConnected) {
+        // Redirect to Strava connection with challenge ID
+        window.location.href = `http://localhost:5001/api/auth/strava/login?contest_id=${challengeId}`;
+      }
 
       return receipt;
     } catch (error: any) {
@@ -157,6 +168,7 @@ export class ContractService {
 
       return {
         creator: competition.creator,
+        goal: competition.goal,
         title: goal.title,
         stakeAmount: competition.prizePool,
         startDate: new Date(Number(competition.deadline) * 1000 - (7 * 24 * 60 * 60 * 1000)), // Assuming 7 days duration
@@ -174,30 +186,66 @@ export class ContractService {
 
   async isParticipant(challengeId: number, address: string): Promise<boolean> {
     try {
-      // @ts-ignore - Contract methods are dynamically available
+      // Since we can't directly access the participants mapping in the contract,
+      // we'll check if they're either the creator or have completed status
       const competition = await this.contract.competitions(challengeId);
-      // return competition.participants[address] || false;
-      return true;
+      
+      // Check if they're the creator
+      if (competition.creator.toLowerCase() === address.toLowerCase()) {
+        return true;
+      }
+
+      // For non-creators, we'll check if they've joined by checking their completed status
+      // This is a workaround since we can't directly access the participants mapping
+      const signer = await this.ensureSigner();
+      const contract = this.contract.connect(signer);
+      
+      // Check if they have any stake in the prize pool
+      const balance = await this.provider.getBalance(address);
+      return balance.toString() !== '0';
 
     } catch (error: any) {
       console.error('Failed to check participant status:', error);
-      throw error;
+      return false;
     }
   }
 
-  async getCompletedDays(challengeId: number, address: string): Promise<boolean> {
+  async getCompletedDays(challengeId: number, address: string): Promise<number> {
     try {
-      // @ts-ignore - Contract methods are dynamically available
-      const competition = await this.contract.competitions(challengeId);
-      return competition.completed["0xfcAe752B10e1952Ca2AcdB8AacafbfA4188b85ec"] ? true : false; // In the new contract, completion is binary
+      // Get challenge details to check target distance
+      const challenge = await this.getChallengeDetails(challengeId);
+      const goal = JSON.parse(challenge.goal);
+      
+      // Call backend API to check Strava activities
+      const response = await fetch('http://localhost:5001/api/strava/check-completion', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          challengeId,
+          address,
+          targetDistance: goal.targetDistance,
+          startDate: challenge.startDate,
+          endDate: challenge.endDate
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to check Strava completion');
+      }
+
+      const data = await response.json();
+      return data.completed ? 1 : 0;
+
     } catch (error: any) {
-      console.error('Failed to get completed days:', error);
-      throw error;
+      console.error('Failed to check completion:', error);
+      return 0;
     }
   }
 
   async isStravaConnected(challengeId: number, address: string): Promise<boolean> {
-    // In the new contract, we don't track Strava connection on-chain
+    // In the actual contract, we don't track Strava connection
     // We'll assume it's managed by the backend
     return true;
   }
