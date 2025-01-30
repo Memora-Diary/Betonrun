@@ -60,6 +60,29 @@ const sepoliaTestnet = defineChain({
   testnet: true,
 });
 
+const baseSepolia = defineChain({
+  id: 11155112,
+  name: 'Base Sepolia',
+  network: 'baseSepolia',
+  nativeCurrency: {
+    decimals: 18,
+    name: 'Base Sepolia Ether',
+    symbol: 'BSEth',
+  },
+  rpcUrls: {
+    default: {
+      http: ['https://rpc.base-sepolia.org'],
+    },
+    public: {
+      http: ['https://rpc.base-sepolia.org'],
+    },
+  },
+  blockExplorers: {
+    default: { name: 'Base Sepolia Scan', url: 'https://base-sepolia.etherscan.io' },
+  },
+  testnet: true,
+});
+
 const evmNetworks = [
   {
     blockExplorerUrls: ["https://amoy.polygonscan.com/"],
@@ -90,15 +113,32 @@ const evmNetworks = [
     networkId: 11155111,
     rpcUrls: ["https://rpc.sepolia.org"],
     vanityName: "Sepolia Testnet",
+  },
+  {
+    blockExplorerUrls: ["https://sepolia.basescan.org"],
+    chainId: 84532,
+    chainName: "Base Sepolia",
+    iconUrls: ["https://example.com/base-sepolia-icon.png"],
+    name: "Base Sepolia",
+    nativeCurrency: {
+      name: "Base Sepolia Ether",
+      symbol: "BASE",
+      decimals: 18,
+    },
+    networkId: 84532,
+    rpcUrls: ["https://sepolia.base.org"],
+    vanityName: "Base Sepolia Testnet",
   }
 ];
-
+//[polygonTestnet.id]: http(),
 export const wagmiConfig = createConfig({
-  chains: [polygonTestnet, sepoliaTestnet],
+  // chains: [polygonTestnet, sepoliaTestnet],
+  chains: [baseSepolia],
   multiInjectedProviderDiscovery: true,
   transports: {
-    [polygonTestnet.id]: http(),
+    
     [sepoliaTestnet.id]: http(),
+    [baseSepolia.id]: http(),
   },
 });
 

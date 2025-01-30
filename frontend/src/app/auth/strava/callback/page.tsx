@@ -24,8 +24,10 @@ export default function StravaCallback() {
         .then((response) => response.json())
         .then((data) => {
           // Notify the parent window of successful authentication
+          console.log(data);
+
           if (window.opener) {
-            window.opener.postMessage({ type: 'strava_auth_success' }, '*');
+            window.opener.postMessage({ type: 'strava_auth_success', data }, '*');
             window.close();
           } else {
             // If no opener, redirect to dashboard
@@ -43,6 +45,8 @@ export default function StravaCallback() {
         });
     } else if (error) {
       if (window.opener) {
+        console.error('Error during Strava authentication:', error);
+
         window.opener.postMessage({ type: 'strava_auth_error', error }, '*');
         window.close();
       } else {

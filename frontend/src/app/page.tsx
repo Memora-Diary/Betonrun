@@ -145,11 +145,16 @@ export default function Home() {
 
         // Listen for messages from the popup
         const handleMessage = (event: MessageEvent) => {
+          console.log(event);
           if (event.data.type === 'strava_auth_success') {
             setIsStravaConnected(true);
+            // Here you would typically handle session tokens, e.g., saving them to local storage or state
+            console.log(event);
+            localStorage.setItem('strava_access_token', event.data.access_token); // Example of handling session token
             stravaWindow?.close();
             window.removeEventListener('message', handleMessage);
           } else if (event.data.type === 'strava_auth_error') {
+            console.log({event});
             console.error('Strava authentication failed:', event.data.error);
             stravaWindow?.close();
             window.removeEventListener('message', handleMessage);
