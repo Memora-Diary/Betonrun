@@ -279,6 +279,29 @@ export default function Home() {
     }
   };
 
+  const handleSettleChallenge = async (challengeId: number) => {
+    try {
+      // Call backend API to initiate settlement
+      const response = await fetch('/api/challenges/settle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ challengeId }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to settle challenge');
+      }
+
+      // Refresh challenges after settlement
+      await loadChallenges();
+    } catch (error) {
+      console.error('Failed to settle challenge:', error);
+      // You might want to add some user feedback here
+    }
+  };
+
   const AthleteProfileModal = () => {
     if (!athleteData || !showProfile) return null;
 
@@ -511,6 +534,12 @@ export default function Home() {
                               Connect Strava to Track Progress
                             </button>
                           )}
+                          <button
+                            onClick={() => handleSettleChallenge(challenge.id)}
+                            className="mt-4 w-full bg-[#FC4C02] text-white px-4 py-2 rounded-lg hover:bg-[#E34402] transition-colors"
+                          >
+                            Settle Challenge
+                          </button>
                         </div>
                       </div>
                     ))}

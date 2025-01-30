@@ -3,6 +3,8 @@ from app.strava_manager import StravaManager
 from .contests import contests
 import requests
 from datetime import datetime, timedelta
+from web3 import Web3
+import os
 
 bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
@@ -143,3 +145,101 @@ def logout():
     resp.delete_cookie('strava_access_token')
     resp.delete_cookie('strava_refresh_token')
     return resp
+
+@bp.route('/challenges/settle', methods=['POST'])
+def settle_challenge():
+    challenge_id = request.json.get('challengeId')
+    if not challenge_id:
+        return jsonify({'error': 'Challenge ID is required'}), 400
+
+    access_token = request.cookies.get('strava_access_token')
+    if not access_token:
+        return jsonify({'error': 'Not authenticated with Strava'}), 401
+
+    try:
+        # 1. Get challenge details from the contract
+        w3 = Web3(Web3.HTTPProvider(os.getenv('WEB3_PROVIDER_URI')))
+        contract_address = os.getenv('CONTRACT_ADDRESS')
+        contract_abi = [...]  # Add your contract ABI here
+        contract = w3.eth.contract(address=contract_address, abi=contract_abi)
+        
+        challenge = contract.functions.competitions(challenge_id).call()
+        
+        # 2. Get participant's activities from Strava
+        headers = {'Authorization': f'Bearer {access_token}'}
+        
+        # Calculate time range based on challenge details
+        end_time = challenge['deadline']
+        start_time = end_time - (7 * 24 * 60 * 60)  # 7 days before deadline
+        
+        activities_url = f'https://www.strava.com/api/v3/athlete/activities'
+        params = {
+            'after': start_time,
+            'before': end_time,
+            'per_page': 100
+        }
+        
+        response = requests.get(activities_url, headers=headers, params=params)
+        activities = response.json()
+
+        # 3. Validate activities against challenge requirements
+        total_distance = 0
+        completed_days = set()
+        
+        for activity in activities:
+            if activity['type'] == 'Run':  # Only count running activities
+                activity_date = datetime.strptime(activity['start_date'], '%Y-%m-%dT%H:%M:%SZ').date()
+                total_distance += activity['distance']  # distance in meters
+                completed_days.add(activity_date)
+
+        # Convert distance to kilometers
+        total_distance_km = total_distance / 1000
+
+        # 4. Determine if challenge was completed successfully
+        challenge_completed = (
+            total_distance_km >= challenge['targetDistance'] and
+            len(completed_days) >= len(challenge['scheduleDays'])
+        )
+
+        if challenge_completed:
+            # 5. Call contract to validate results and distribute rewards
+            admin_private_key = os.getenv('ADMIN_PRIVATE_KEY')
+            admin_account = w3.eth.account.from_key(admin_private_key)
+            
+            # Build transaction
+            nonce = w3.eth.get_transaction_count(admin_account.address)
+            
+            # Prepare the transaction
+            tx = contract.functions.validateResults(
+                challenge_id,
+                [challenge['creator']]  # Add logic to include all successful participants
+            ).build_transaction({
+                'from': admin_account.address,
+                'nonce': nonce,
+                'gas': 2000000,
+                'gasPrice': w3.eth.gas_price
+            })
+            
+            # Sign and send the transaction
+            signed_tx = w3.eth.account.sign_transaction(tx, admin_private_key)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            
+            # Wait for transaction receipt
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+            
+            return jsonify({
+                'success': True,
+                'message': 'Challenge completed successfully',
+                'transaction_hash': receipt['transactionHash'].hex()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Challenge requirements not met',
+                'total_distance': total_distance_km,
+                'completed_days': len(completed_days)
+            })
+
+    except Exception as error:
+        current_app.logger.error(f"Settlement error: {str(error)}")
+        return jsonify({'error': str(error)}), 500

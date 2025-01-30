@@ -1,5 +1,6 @@
 import { useDynamicContext } from "@dynamic-labs/sdk-react-core";
 import { useWallet } from "../ClientWrapper";
+import { useEffect } from "react";
 
 interface ConnectionStepProps {
   isStravaConnected: boolean;
@@ -16,6 +17,12 @@ export default function ConnectionStep({
 }: ConnectionStepProps) {
   const { isWalletConnected } = useWallet();
   const { setShowAuthFlow } = useDynamicContext();
+
+  useEffect(() => {
+    if (isStravaConnected && isWalletConnected) {
+      onNext();
+    }
+  }, [isStravaConnected, isWalletConnected, onNext]);
 
   return (
     <div className="space-y-8 text-center py-8">
@@ -76,15 +83,6 @@ export default function ConnectionStep({
           </div>
         </div>
       </div>
-
-      {isStravaConnected && isWalletConnected && (
-        <button
-          onClick={onNext}
-          className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-6 py-3 rounded-xl hover:from-orange-600 hover:to-red-700 transition-all duration-300 text-lg font-medium"
-        >
-          Continue to Challenge Creation
-        </button>
-      )}
     </div>
   );
-} 
+}

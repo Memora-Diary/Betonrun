@@ -56,7 +56,7 @@ export default function ActivityTypeStep({
         >
           Run 🏃‍♂️
         </button>
-        <button
+        {/* <button
           onClick={() => {
             if (!isStravaConnected) {
               onStravaConnect();
@@ -87,7 +87,7 @@ export default function ActivityTypeStep({
           }`}
         >
           Swim 🏊‍♂️
-        </button>
+        </button> */}
       </div>
 
       <div className="grid grid-cols-1 gap-4">
