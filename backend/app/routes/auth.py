@@ -1,7 +1,8 @@
-from flask import Blueprint, current_app, request, jsonify, session
+from flask import Blueprint, current_app, request, jsonify, session, make_response
 from app.strava_manager import StravaManager
 from .contests import contests
 import requests
+from datetime import datetime, timedelta
 
 bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
@@ -27,38 +28,35 @@ def strava_callback():
         })
         token_response = response.json()
 
-        # Store tokens in session
-        session['strava_tokens'] = {
-            'access_token': token_response['access_token'],
-            'refresh_token': token_response['refresh_token'],
-            'expires_at': token_response['expires_at']
-        }
+        # Create response with tokens
+        resp = make_response(jsonify({
+            'success': True,
+            'athlete': token_response['athlete']
+        }))
 
-        # Get athlete info from the token response
-        athlete = token_response['athlete']
+        # Set secure cookies for tokens
+        # Set to expire slightly before the actual token expiration
+        expires = datetime.fromtimestamp(token_response['expires_at'] - 300)  # 5 minutes buffer
         
-        # Store athlete info in session
-        session['athlete'] = {
-            'id': athlete['id'],
-            'firstname': athlete['firstname'],
-            'lastname': athlete['lastname'],
-            'profile': athlete['profile']
-        }
+        resp.set_cookie(
+            'strava_access_token',
+            token_response['access_token'],
+            httponly=True,
+            secure=True,
+            samesite='Lax',
+            expires=expires
+        )
+        
+        resp.set_cookie(
+            'strava_refresh_token',
+            token_response['refresh_token'],
+            httponly=True,
+            secure=True,
+            samesite='Lax',
+            expires=datetime.now() + timedelta(days=365)  # 1 year for refresh token
+        )
 
-        # Update contest participant if needed
-        if 'pending_contest_id' in session:
-            contest_id = session['pending_contest_id']
-            if contest_id in contests:
-                contest = contests[contest_id]
-                participant = next(
-                    (p for p in contest['participants'] if p['id'] == athlete['id']),
-                    None
-                )
-                if participant:
-                    participant['strava_connected'] = True
-            session.pop('pending_contest_id')
-
-        return jsonify(token_response)
+        return resp
 
     except Exception as error:
         current_app.logger.error(f"Token exchange error: {str(error)}")
@@ -66,41 +64,82 @@ def strava_callback():
 
 @bp.route('/strava/refresh')
 def strava_refresh():
-    refresh_token = request.args.get('refresh_token')
+    refresh_token = request.cookies.get('strava_refresh_token')
     
     if not refresh_token:
-        return jsonify({'error': 'No refresh token provided'}), 400
+        return jsonify({'error': 'No refresh token provided'}), 401
         
     try:
-        client = StravaManager(session=False)
-        token_response = client.refresh_token(refresh_token)
-        return jsonify(token_response)
+        response = requests.post('https://www.strava.com/oauth/token', {
+            'client_id': current_app.config['STRAVA_CLIENT_ID'],
+            'client_secret': current_app.config['STRAVA_CLIENT_SECRET'],
+            'refresh_token': refresh_token,
+            'grant_type': 'refresh_token'
+        })
+        
+        token_response = response.json()
+        
+        # Create response with success message
+        resp = make_response(jsonify({'success': True}))
+        
+        # Update cookies with new tokens
+        expires = datetime.fromtimestamp(token_response['expires_at'] - 300)
+        
+        resp.set_cookie(
+            'strava_access_token',
+            token_response['access_token'],
+            httponly=True,
+            secure=True,
+            samesite='Lax',
+            expires=expires
+        )
+        
+        resp.set_cookie(
+            'strava_refresh_token',
+            token_response['refresh_token'],
+            httponly=True,
+            secure=True,
+            samesite='Lax',
+            expires=datetime.now() + timedelta(days=365)
+        )
+        
+        return resp
         
     except Exception as error:
+        current_app.logger.error(f"Token refresh error: {str(error)}")
         return jsonify({'error': 'Failed to refresh token'}), 500
 
 @bp.route('/strava/athlete')
 def get_athlete():
-    if 'athlete' not in session:
+    access_token = request.cookies.get('strava_access_token')
+    
+    if not access_token:
         return jsonify({'error': 'Not authenticated with Strava'}), 401
 
     try:
-        # Get the access token from the session or token response
-        access_token = session.get('strava_tokens', {}).get('access_token')
-        
-        if not access_token:
-            return jsonify({'error': 'No access token available'}), 401
-
-        # Make request to Strava API
         headers = {'Authorization': f'Bearer {access_token}'}
         response = requests.get('https://www.strava.com/api/v3/athlete', headers=headers)
         
-        if response.status_code != 200:
-            return jsonify({'error': 'Failed to fetch athlete data'}), response.status_code
+        if response.status_code == 401:
+            # Token expired, try to refresh
+            refresh_response = strava_refresh()
+            if refresh_response.status_code != 200:
+                return jsonify({'error': 'Authentication expired'}), 401
+                
+            # Get new access token from cookie
+            access_token = request.cookies.get('strava_access_token')
+            headers = {'Authorization': f'Bearer {access_token}'}
+            response = requests.get('https://www.strava.com/api/v3/athlete', headers=headers)
 
-        athlete_data = response.json()
-        return jsonify(athlete_data)
+        return jsonify(response.json())
 
     except Exception as error:
         current_app.logger.error(f"Error fetching athlete data: {str(error)}")
         return jsonify({'error': 'Failed to fetch athlete data'}), 500
+
+@bp.route('/strava/logout')
+def logout():
+    resp = make_response(jsonify({'success': True}))
+    resp.delete_cookie('strava_access_token')
+    resp.delete_cookie('strava_refresh_token')
+    return resp
