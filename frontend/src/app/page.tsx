@@ -29,6 +29,42 @@ interface Challenge {
   isStravaConnected?: boolean;
 }
 
+interface StravaBike {
+  id: string;
+  primary: boolean;
+  name: string;
+  resource_state: number;
+  distance: number;
+}
+
+interface StravaShoe {
+  id: string;
+  primary: boolean;
+  name: string;
+  resource_state: number;
+  distance: number;
+}
+
+interface StravaAthlete {
+  id: number;
+  username: string;
+  firstname: string;
+  lastname: string;
+  city: string;
+  state: string;
+  country: string;
+  sex: string;
+  premium: boolean;
+  created_at: string;
+  profile_medium: string;
+  profile: string;
+  follower_count: number;
+  friend_count: number;
+  measurement_preference: string;
+  bikes: StravaBike[];
+  shoes: StravaShoe[];
+}
+
 export default function Home() {
   const router = useRouter();
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -40,6 +76,8 @@ export default function Home() {
     available: []
   });
   const [loading, setLoading] = useState(true);
+  const [athleteData, setAthleteData] = useState<StravaAthlete | null>(null);
+  const [showProfile, setShowProfile] = useState(false);
 
   const [stats, setStats] = useState({
     totalStaked: 156890,
@@ -125,6 +163,29 @@ export default function Home() {
     }
   };
 
+  const checkStravaStatus = async () => {
+    try {
+      const response = await fetch('/api/auth/strava/status');
+      const data = await response.json();
+      setIsStravaConnected(data.isConnected);
+    } catch (error) {
+      console.error('Failed to check Strava status:', error);
+    }
+  };
+
+  const fetchAthleteData = async () => {
+    try {
+      const response = await fetch('/api/auth/strava/athlete');
+      if (!response.ok) {
+        throw new Error('Failed to fetch athlete data');
+      }
+      const data = await response.json();
+      setAthleteData(data);
+    } catch (error) {
+      console.error('Error fetching athlete data:', error);
+    }
+  };
+
   const handleStravaConnect = async () => {
     try {
       const response = await fetch('/api/auth/strava/login');
@@ -136,25 +197,20 @@ export default function Home() {
         const left = window.screen.width / 2 - width / 2;
         const top = window.screen.height / 2 - height / 2;
 
-        // Open popup
         const stravaWindow = window.open(
           data.authorize_url,
           'Strava Authorization',
           `width=${width},height=${height},left=${left},top=${top}`
         );
 
-        // Listen for messages from the popup
-        const handleMessage = (event: MessageEvent) => {
-          console.log(event);
+        const handleMessage = async (event: MessageEvent) => {
           if (event.data.type === 'strava_auth_success') {
             setIsStravaConnected(true);
-            // Here you would typically handle session tokens, e.g., saving them to local storage or state
-            console.log(event);
-            localStorage.setItem('strava_access_token', event.data.access_token); // Example of handling session token
+            await checkStravaStatus();
+            await fetchAthleteData();
             stravaWindow?.close();
             window.removeEventListener('message', handleMessage);
           } else if (event.data.type === 'strava_auth_error') {
-            console.log({event});
             console.error('Strava authentication failed:', event.data.error);
             stravaWindow?.close();
             window.removeEventListener('message', handleMessage);
@@ -163,7 +219,6 @@ export default function Home() {
 
         window.addEventListener('message', handleMessage);
 
-        // Cleanup if window is closed manually
         const checkClosed = setInterval(() => {
           if (stravaWindow?.closed) {
             clearInterval(checkClosed);
@@ -175,6 +230,16 @@ export default function Home() {
       console.error('Failed to get Strava authorization URL:', error);
     }
   };
+
+  useEffect(() => {
+    checkStravaStatus();
+  }, []);
+
+  useEffect(() => {
+    if (isStravaConnected) {
+      fetchAthleteData();
+    }
+  }, [isStravaConnected]);
 
   const handleCreateContest = async (contest: Contest) => {
     try {
@@ -206,6 +271,176 @@ export default function Home() {
     }
   };
 
+  const AthleteProfileModal = () => {
+    if (!athleteData || !showProfile) return null;
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="bg-gray-800 rounded-xl p-8 max-w-2xl w-full mx-4 relative overflow-y-auto max-h-[90vh]">
+          {/* Close button */}
+          <button 
+            onClick={() => setShowProfile(false)}
+            className="absolute top-6 right-6 text-gray-400 hover:text-white"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+
+          {/* Profile Header */}
+          <div className="flex items-center gap-6 mb-8 border-b border-gray-700 pb-6">
+            <img 
+              src={athleteData.profile} 
+              alt={`${athleteData.firstname} ${athleteData.lastname}`}
+              className="w-24 h-24 rounded-full object-cover"
+            />
+            <div>
+              <h2 className="text-3xl font-bold text-white mb-1">
+                {athleteData.firstname} {athleteData.lastname}
+              </h2>
+              <p className="text-gray-400 text-lg">@{athleteData.username}</p>
+              {athleteData.premium && (
+                <span className="inline-block mt-2 bg-gradient-to-r from-orange-500 to-red-600 text-white text-sm px-3 py-1 rounded-full">
+                  Premium Member
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div className="bg-gray-700/50 rounded-xl p-5">
+              <h3 className="text-gray-400 text-sm font-medium mb-2">Location</h3>
+              <p className="text-white text-lg">
+                {[athleteData.city, athleteData.state, athleteData.country]
+                  .filter(Boolean)
+                  .join(', ')}
+              </p>
+            </div>
+
+            <div className="bg-gray-700/50 rounded-xl p-5">
+              <h3 className="text-gray-400 text-sm font-medium mb-2">Member Since</h3>
+              <p className="text-white text-lg">
+                {new Date(athleteData.created_at).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric'
+                })}
+              </p>
+            </div>
+
+            <div className="bg-gray-700/50 rounded-xl p-5">
+              <h3 className="text-gray-400 text-sm font-medium mb-2">Social</h3>
+              <div className="flex gap-6">
+                <div>
+                  <p className="text-white text-lg font-semibold">{athleteData.friend_count}</p>
+                  <p className="text-gray-400 text-sm">Following</p>
+                </div>
+                <div>
+                  <p className="text-white text-lg font-semibold">{athleteData.follower_count}</p>
+                  <p className="text-gray-400 text-sm">Followers</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-700/50 rounded-xl p-5">
+              <h3 className="text-gray-400 text-sm font-medium mb-2">Preferences</h3>
+              <div className="space-y-1">
+                <p className="text-white">
+                  <span className="text-gray-400">Measurement: </span>
+                  {athleteData.measurement_preference}
+                </p>
+                {athleteData.sex && (
+                  <p className="text-white">
+                    <span className="text-gray-400">Gender: </span>
+                    {athleteData.sex === 'M' ? 'Male' : 'Female'}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Equipment Section */}
+          <div className="space-y-6">
+            {/* Bikes */}
+            {athleteData.bikes && athleteData.bikes.length > 0 && (
+              <div className="border-t border-gray-700 pt-6">
+                <h3 className="text-xl font-semibold text-white mb-4">Bikes</h3>
+                <div className="space-y-3">
+                  {athleteData.bikes.map(bike => (
+                    <div key={bike.id} className="bg-gray-700/50 rounded-xl p-4 flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        <svg className="w-6 h-6 text-orange-500" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M15.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM5 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.9 0-3.5-1.6-3.5-3.5s1.6-3.5 3.5-3.5 3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5zm5.8-10l2.4-2.4.8.8c1.3 1.3 3 2.1 5.1 2.1V9c-1.5 0-2.7-.6-3.6-1.5l-1.9-1.9c-.5-.4-1-.6-1.6-.6s-1.1.2-1.4.6L7.8 8.4c-.4.4-.6.9-.6 1.4 0 .6.2 1.1.6 1.4L11 14v5h2v-6.2l-2.2-2.3zM19 12c-2.8 0-5 2.2-5 5s2.2 5 5 5 5-2.2 5-5-2.2-5-5-5zm0 8.5c-1.9 0-3.5-1.6-3.5-3.5s1.6-3.5 3.5-3.5 3.5 1.6 3.5 3.5-1.6 3.5-3.5 3.5z" />
+                        </svg>
+                        <div>
+                          <span className="text-white font-medium">{bike.name}</span>
+                          {bike.primary && (
+                            <span className="ml-2 text-xs bg-orange-500 text-white px-2 py-0.5 rounded-full">
+                              Primary
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-gray-300">{(bike.distance / 1000).toFixed(1)}km</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Shoes */}
+            {athleteData.shoes && athleteData.shoes.length > 0 && (
+              <div className="border-t border-gray-700 pt-6">
+                <h3 className="text-xl font-semibold text-white mb-4">Running Shoes</h3>
+                <div className="space-y-3">
+                  {athleteData.shoes.map(shoe => (
+                    <div key={shoe.id} className="bg-gray-700/50 rounded-xl p-4 flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        <svg className="w-6 h-6 text-orange-500" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M21.5 6.5c-.3-.3-.7-.5-1.1-.5h-3.3l-1.4-3.1c-.3-.7-1-1.2-1.8-1.2h-4.7c-.8 0-1.5.4-1.8 1.2l-1.4 3.1h-3.3c-.4 0-.8.2-1.1.5-.3.3-.5.7-.5 1.1v12.8c0 .4.2.8.5 1.1.3.3.7.5 1.1.5h17c.4 0 .8-.2 1.1-.5.3-.3.5-.7.5-1.1v-12.8c0-.4-.2-.8-.5-1.1zm-9.5 0h-4l1.4-3.1h1.2l1.4 3.1z" />
+                        </svg>
+                        <div>
+                          <span className="text-white font-medium">{shoe.name}</span>
+                          {shoe.primary && (
+                            <span className="ml-2 text-xs bg-orange-500 text-white px-2 py-0.5 rounded-full">
+                              Primary
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-gray-300">{(shoe.distance / 1000).toFixed(1)}km</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAthleteInfo = () => {
+    if (!athleteData) return null;
+
+    return (
+      <div 
+        onClick={() => setShowProfile(true)}
+        className="flex items-center gap-2 bg-gray-800 px-4 py-2 rounded-xl cursor-pointer hover:bg-gray-700 transition-colors"
+      >
+        <img 
+          src={athleteData.profile_medium} 
+          alt={`${athleteData.firstname} ${athleteData.lastname}`}
+          className="w-8 h-8 rounded-full"
+        />
+        <span className="text-gray-200">
+          {athleteData.firstname} {athleteData.lastname}
+        </span>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gray-900 text-white relative">
       {/* Navigation */}
@@ -223,15 +458,20 @@ export default function Home() {
                 </svg>
                 Connect Strava
               </button>
-            ) : !isWalletConnected ? (
-              <DynamicWidget />
             ) : (
-              <button
-                onClick={() => setShowCreateForm(true)}
-                className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-6 py-2 rounded-xl hover:from-orange-600 hover:to-red-700 transition-all duration-300 shadow-lg hover:shadow-xl"
-              >
-                Create Challenge
-              </button>
+              <div className="flex items-center gap-4">
+                {renderAthleteInfo()}
+                {!isWalletConnected ? (
+                  <DynamicWidget />
+                ) : (
+                  <button
+                    onClick={() => setShowCreateForm(true)}
+                    className="bg-gradient-to-r from-orange-500 to-red-600 text-white px-6 py-2 rounded-xl hover:from-orange-600 hover:to-red-700 transition-all duration-300 shadow-lg hover:shadow-xl"
+                  >
+                    Create Challenge
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -361,6 +601,8 @@ export default function Home() {
         isStravaConnected={isStravaConnected}
         onStravaConnect={handleStravaConnect}
       />
+
+      <AthleteProfileModal />
     </div>
   );
 }

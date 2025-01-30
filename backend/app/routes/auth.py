@@ -27,6 +27,13 @@ def strava_callback():
         })
         token_response = response.json()
 
+        # Store tokens in session
+        session['strava_tokens'] = {
+            'access_token': token_response['access_token'],
+            'refresh_token': token_response['refresh_token'],
+            'expires_at': token_response['expires_at']
+        }
+
         # Get athlete info from the token response
         athlete = token_response['athlete']
         
@@ -71,3 +78,29 @@ def strava_refresh():
         
     except Exception as error:
         return jsonify({'error': 'Failed to refresh token'}), 500
+
+@bp.route('/strava/athlete')
+def get_athlete():
+    if 'athlete' not in session:
+        return jsonify({'error': 'Not authenticated with Strava'}), 401
+
+    try:
+        # Get the access token from the session or token response
+        access_token = session.get('strava_tokens', {}).get('access_token')
+        
+        if not access_token:
+            return jsonify({'error': 'No access token available'}), 401
+
+        # Make request to Strava API
+        headers = {'Authorization': f'Bearer {access_token}'}
+        response = requests.get('https://www.strava.com/api/v3/athlete', headers=headers)
+        
+        if response.status_code != 200:
+            return jsonify({'error': 'Failed to fetch athlete data'}), response.status_code
+
+        athlete_data = response.json()
+        return jsonify(athlete_data)
+
+    except Exception as error:
+        current_app.logger.error(f"Error fetching athlete data: {str(error)}")
+        return jsonify({'error': 'Failed to fetch athlete data'}), 500
